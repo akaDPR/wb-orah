@@ -1,5 +1,5 @@
-import { getRepository } from "typeorm"
 import { NextFunction, Request, Response } from "express"
+import { getRepository } from "typeorm"
 import { Student } from "../entity/student.entity"
 import { CreateStudentInput, UpdateStudentInput } from "../interface/student.interface"
 

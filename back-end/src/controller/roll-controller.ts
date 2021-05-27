@@ -1,10 +1,10 @@
-import { getRepository } from "typeorm"
 import { NextFunction, Request, Response } from "express"
+import { map } from "lodash"
+import { getRepository } from "typeorm"
 import { Roll } from "../entity/roll.entity"
 import { StudentRollState } from "../entity/student-roll-state.entity"
 import { CreateRollInput, UpdateRollInput } from "../interface/roll.interface"
 import { CreateStudentRollStateInput, UpdateStudentRollStateInput } from "../interface/student-roll-state.interface"
-import { map } from "lodash"
 
 export class RollController {
   private rollRepository = getRepository(Roll)
