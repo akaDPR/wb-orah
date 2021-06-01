@@ -4,6 +4,7 @@
    "private": true,
    "description": "Awesome project developed with TypeORM.",
    "devDependencies": {
+      "nodemon": "^2.0.7",
       "ts-node": "^9.1.1",
       "typescript": "^4.0.7"
    },

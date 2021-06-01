@@ -10,6 +10,89 @@ import moment = require("moment")
 export class GroupController {
   private groupRepository = getRepository(Group)
 
+  private groupStudentRepository = getRepository(GroupStudent)
+
+  private rollRepository = getRepository(Roll)
+
+  private studentRollStateRepository = getRepository(StudentRollState)
+
+  private async deleteAllStudents({ group_id }) {
+    return await this.groupStudentRepository.delete({ group_id })
+  }
+
+  private async weeksFilter({ number_of_weeks }) {
+    const beforeCount = number_of_weeks * 7
+
+    const __fromTime = new Date(Date.now() - beforeCount * 24 * 60 * 60 * 1000).toISOString()
+
+    const __toTime = new Date()
+
+    const agoDate = moment(__fromTime).format("YYYY-MM-DD HH:MM:SS.SSS")
+    const currentDate = moment(__toTime).format("YYYY-MM-DD HH:MM:SS.SSS")
+
+    return await this.rollRepository
+      .createQueryBuilder("roll")
+      .select("roll.id")
+      .where("roll.completed_at > :agoDate", { agoDate })
+      .andWhere("roll.completed_at < :currentDate", { currentDate })
+      .getMany()
+      .then((_) => _.map((el) => el.id))
+  }
+
+  private async runEach({ grp }) {
+    /* STEP 1 : delete all students created previously */
+
+    await this.deleteAllStudents({
+      group_id: grp.id,
+    })
+
+    /* this is to collect rolls completed within n weeks */
+    const filteredRoll = await this.weeksFilter({ number_of_weeks: grp.number_of_weeks })
+
+    const _roll_states = grp.roll_states.split("|").map((_) => _.trim())
+
+    if (filteredRoll.length) {
+      return { message: "no rolls found" }
+    }
+
+    /*
+      SELECT 
+      "student_roll_state"."student_id" as student_id, 
+      "student_roll_state"."state" as state, 
+        COUNT("student_roll_state"."state") AS incident_count 
+      FROM 
+        "student_roll_state" "student_roll_state" 
+      WHERE 
+        "student_roll_state"."roll_id" IN (rolls) 
+        AND "student_roll_state"."state" IN (states) 
+      GROUP BY 
+        "student_roll_state"."student_id" 
+      HAVING 
+        COUNT("student_roll_state"."state") > incidents
+    */
+
+    let filteredStudents = await this.studentRollStateRepository
+      .createQueryBuilder("student_roll_state")
+      .select(["student_roll_state.student_id as student_id", "student_roll_state.state as state"])
+      .addSelect("COUNT(student_roll_state.state) AS incident_count")
+      .where("student_roll_state.roll_id IN (:...filteredRoll)", { filteredRoll })
+      .andWhere("student_roll_state.state IN (:..._roll_states)", { _roll_states })
+      .having(`COUNT(student_roll_state.state) ${grp.ltmt} :incidents`, { incidents: grp.incidents })
+      .groupBy("student_roll_state.student_id")
+      .getRawMany()
+      .then((results) => results.map((_) => ({ group_id: grp.id, student_id: _.student_id, incident_count: _.incident_count })))
+
+    /* Bulk insert the populated students  */
+    await this.groupRepository.save({
+      id: grp.id,
+      run_at: new Date().toISOString(),
+      student_count: filteredStudents.length,
+    })
+
+    /* Update groups with run_at and stduents_count */
+    return await this.groupRepository.createQueryBuilder("group_student").insert().into(GroupStudent).values(filteredStudents).execute()
+  }
+
   async allGroups(request: Request, response: Response, next: NextFunction) {
     // Task 1:
     // Return the list of all groups
@@ -70,7 +153,7 @@ export class GroupController {
     // Task 1:
     // Return the list of Students that are in a Group
 
-    const allStudents = await getRepository(GroupStudent)
+    const allStudents = await this.groupStudentRepository
       .createQueryBuilder("group_student")
       .select(["group.id as group_id", "group.name as group_name"])
       .addSelect(["student.first_name AS first_name", "student.last_name AS last_name", "student.first_name || ' ' ||student.last_name  AS full_name"])
@@ -104,99 +187,31 @@ export class GroupController {
     return allStudents
   }
 
-  private async deleteAllStudents({ group_id }) {
-    return await getRepository(GroupStudent).delete({ group_id })
-  }
-
-  private async weeksFilter({ number_of_weeks }) {
-    const beforeCount = number_of_weeks * 7
-
-    const __fromTime = new Date(Date.now() - beforeCount * 24 * 60 * 60 * 1000).toISOString()
-
-    const __toTime = new Date()
-
-    const agoDate = moment(__fromTime).format("YYYY-MM-DD HH:MM:SS.SSS")
-    const currentDate = moment(__toTime).format("YYYY-MM-DD HH:MM:SS.SSS")
-
-    return await getRepository(Roll)
-      .createQueryBuilder("roll")
-      .select("roll.id")
-      .where("roll.completed_at > :agoDate", { agoDate })
-      .andWhere("roll.completed_at < :currentDate", { currentDate })
-      .getMany()
-      .then((_) => _.map((el) => el.id))
-  }
-
-  private async runEach({ grp }) {
-    /* STEP 1 : delete all students created previously */
-    await this.deleteAllStudents({
-      group_id: grp.id,
-    })
-
-    const _roll_states = grp.roll_states.split("|").map((_) => _.trim())
-
-    /* this is to collect rolls completed within n weeks */
-    const filteredRoll = await this.weeksFilter({ number_of_weeks: grp.number_of_weeks })
-
-    /*
-      SELECT 
-      "student_roll_state"."student_id" as student_id, 
-      "student_roll_state"."state" as state, 
-        COUNT("student_roll_state"."state") AS incident_count 
-      FROM 
-        "student_roll_state" "student_roll_state" 
-      WHERE 
-        "student_roll_state"."roll_id" IN (rolls) 
-        AND "student_roll_state"."state" IN (states) 
-      GROUP BY 
-        "student_roll_state"."student_id" 
-      HAVING 
-        COUNT("student_roll_state"."state") > incidents
-    */
-
-    let filteredStudents = await getRepository(StudentRollState)
-      .createQueryBuilder("student_roll_state")
-      .select(["student_roll_state.student_id as student_id", "student_roll_state.state as state"])
-      .addSelect("COUNT(student_roll_state.state) AS incident_count")
-      .where("student_roll_state.roll_id IN (:...filteredRoll)", { filteredRoll })
-      .andWhere("student_roll_state.state IN (:..._roll_states)", { _roll_states })
-      .having(`COUNT(student_roll_state.state) ${grp.ltmt} :incidents`, { incidents: grp.incidents })
-      .groupBy("student_roll_state.student_id")
-      .getRawMany()
-      .then((results) => results.map((_) => ({ group_id: grp.id, student_id: _.student_id, incident_count: _.incident_count })))
-
-    /* Bulk insert the populated students  */
-    await getRepository(Group).save({
-      id: grp.id,
-      run_at: new Date().toISOString(),
-      student_count: filteredStudents.length,
-    })
-
-    /* Update groups with run_at and stduents_count */
-    return await getRepository(GroupStudent).createQueryBuilder("group_student").insert().into(GroupStudent).values(filteredStudents).execute()
-  }
-
   async runGroupFilters(request: Request, response: Response, next: NextFunction) {
     // Task 2:
+
     // 1. Clear out the groups (delete all the students from the groups)
     // 2. For each group, query the student rolls to see which students match the filter for the group
     // 3. Add the list of students that match the filter to the group
 
     /* to collect all groups */
-    const allGroups = await getRepository(Group)
+    const allGroups = await this.groupRepository
       .createQueryBuilder("group")
       .select(["group.id", "group.number_of_weeks", "group.roll_states", "group.incidents", "group.ltmt"])
       .getMany()
 
     /* Using promise.all will cause fast-fail scenario, you can handle it by mapping it into and pick catch */
+    const _promises = []
 
-    const promises = []
+    /*
+      runEach will hold a responsibilty of performing filters for a group
+    */
 
     allGroups.forEach((grp) => {
-      promises.push(this.runEach({ grp }))
+      _promises.push(this.runEach({ grp }))
     })
 
-    return await Promise.allSettled(promises).then((results) => results)
+    return await Promise.allSettled(_promises).then((results) => results)
   }
 }
 
