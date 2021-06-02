@@ -49,9 +49,17 @@ export class GroupController {
     /* this is to collect rolls completed within n weeks */
     const filteredRoll = await this.weeksFilter({ number_of_weeks: grp.number_of_weeks })
 
+    console.log(filteredRoll)
+
     const _roll_states = grp.roll_states.split("|").map((_) => _.trim())
 
-    if (filteredRoll.length) {
+    if (!filteredRoll.length) {
+      await this.groupRepository.save({
+        id: grp.id,
+        run_at: new Date().toISOString(),
+        student_count: 0,
+      })
+
       return { message: "no rolls found" }
     }
 
